@@ -1,0 +1,11 @@
+The code forked from thelondonsmiths/Solex_ser_recon_EN (https://github.com/thelondonsmiths/Solex_ser_recon_EN)
+Mod by lzq (nnlzq@163.com) @ 2026/1/19
+
+Add some function:
+1、use multiprocess to accelerate the process speed.
+2、modify cv2 imread/imwrite to support directory or file name with Chinese characters.
+3、fixed the "Folder input mode" when in "Continuous detect mode", will get corrupt image sometimes.
+4、when use "Crop square", align the whole disk in center(up/down, left/right) of image.
+
+
+
