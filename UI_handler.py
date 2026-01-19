@@ -115,11 +115,15 @@ def read_langs():
 # ------------------------------------------------------------------------------
 
 
-def get_img_data(f, maxsize=(30, 18), first=False):
+def get_img_data(f, maxsize=(30, 18), first=False,color='mono'):
     """Generate image data using PIL
     """
     try:
-        img = Image.open(f)
+        #img = Image.open(f)
+        if color=='rgb':
+            img = Image.open(f).convert('RGB')
+        else:
+            img = Image.open(f).convert('I')
         img.thumbnail(maxsize)
         if first:                     # tkinter is inactive the first time
             bio = io.BytesIO()
@@ -138,7 +142,8 @@ def change_langs(window, popup_messages, lang_dict, flag_change=True):
     for k, v in lang_dict.items():
         if k == '_flag_icon':
             if flag_change:
-                window['_flag_icon'].update(data=get_img_data(resource_path(os.path.join('language_data', v))))
+                #window['_flag_icon'].update(data=get_img_data(resource_path(os.path.join('language_data', v))))
+                window['_flag_icon'].update(data=get_img_data(resource_path(os.path.join('language_data', v)),color='rgb' ))
             flag_ok = 1
         elif k in popup_ids:
             popup_messages[k] = v
@@ -234,7 +239,7 @@ def inputUI(options):
         layout_title + [[tab_group]] + layout_folder_output + layout_base
     ]
 
-    window = sg.Window('SHG Version 4.3', layout, finalize=True)
+    window = sg.Window('SHG Version 4.3.5 Mod', layout, finalize=True)
     window.BringToFront()
 
     if options['language'] in langs:

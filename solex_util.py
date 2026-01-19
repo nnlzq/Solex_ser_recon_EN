@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 @author: Andrew Smith
 contributors: Valerie Desnoux, Jean-Francois Pittet, Jean-Baptiste Butet, Pascal Berteau, Matt Considine
@@ -11,7 +12,7 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 from scipy.interpolate import interp1d
 import os
-#import time
+
 from scipy.signal import savgol_filter
 import cv2
 import sys
@@ -25,6 +26,7 @@ import cv2
 from scipy.optimize import curve_fit
 import datetime
 import traceback
+import cv2_chn
 
 def clearlog(path, options):
     try:
@@ -557,13 +559,17 @@ def image_process(frame, cercle, options, header, basefich):
     if not '_nolog' in options: # '_nolog' is used in spectralAnalyser
         if options['clahe_only'] or not options['protus_only']:
             print('saving image to:' + basefich+'_clahe.png')
-            cv2.imwrite(output_path(basefich+'_clahe.png', options),cc, [cv2.IMWRITE_PNG_COMPRESSION, compression])
+            #cv2.imwrite(output_path(basefich+'_clahe.png', options),cc, [cv2.IMWRITE_PNG_COMPRESSION, compression])
+            cv2_chn.imwrite(output_path(basefich+'_clahe.png', options),cc, [cv2.IMWRITE_PNG_COMPRESSION, compression])
         if options['protus_only'] or not options['clahe_only']:
-            cv2.imwrite(output_path(basefich+'_protus.png', options), frame_protus, [cv2.IMWRITE_PNG_COMPRESSION, compression])
+            #cv2.imwrite(output_path(basefich+'_protus.png', options), frame_protus, [cv2.IMWRITE_PNG_COMPRESSION, compression])
+            cv2_chn.imwrite(output_path(basefich+'_protus.png', options), frame_protus, [cv2.IMWRITE_PNG_COMPRESSION, compression])
         if not options['clahe_only'] and not options['protus_only']:
             # save "high-contrast" and "unconstrasted" pngs
-            cv2.imwrite(output_path(basefich+'_uncontrasted.png', options), frame_raw, [cv2.IMWRITE_PNG_COMPRESSION, compression])
-            cv2.imwrite(output_path(basefich+'_high_contrast.png', options), frame_HC, [cv2.IMWRITE_PNG_COMPRESSION, compression])
+            #cv2.imwrite(output_path(basefich+'_uncontrasted.png', options), frame_raw, [cv2.IMWRITE_PNG_COMPRESSION, compression])
+            cv2_chn.imwrite(output_path(basefich+'_uncontrasted.png', options), frame_raw, [cv2.IMWRITE_PNG_COMPRESSION, compression])
+            #cv2.imwrite(output_path(basefich+'_high_contrast.png', options), frame_HC, [cv2.IMWRITE_PNG_COMPRESSION, compression])
+            cv2_chn.imwrite(output_path(basefich+'_high_contrast.png', options), frame_HC, [cv2.IMWRITE_PNG_COMPRESSION, compression])
         
     # The 3 images are concatenated together in 1 image => 'Sun images'
     # The 'Sun images' is scaled for the monitor maximal dimension ... it is scaled to match the dimension of the monitor without 

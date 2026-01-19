@@ -25,7 +25,7 @@ from PIL import Image, ImageTk
 from solex_util import compute_mean_return_fit
 from io import BytesIO
 import cv2
-
+import cv2_chn
 from solex_util import *
 from video_reader import *
 from ellipse_to_circle import ellipse_to_circle, correct_image
@@ -384,7 +384,9 @@ def analyseSpectrum(options, file, lang_dict):
                 clahe, protus = single_image_process(frame_circularized, hdr, options, cercle0, borders, '', backup_bounds)
                 compression = 0
                 basename = os.path.splitext(file)[0] + '_shift='+str(options['shift'][0])
-                cv2.imwrite(output_path(basename+'_clahe.png', options), clahe, [cv2.IMWRITE_PNG_COMPRESSION, compression])   # Modification Jean-Francois: placed before the IF for clear reading
-                cv2.imwrite(output_path(basename+'_protus.png', options), protus, [cv2.IMWRITE_PNG_COMPRESSION, compression])
+                #cv2.imwrite(output_path(basename+'_clahe.png', options), clahe, [cv2.IMWRITE_PNG_COMPRESSION, compression])   # Modification Jean-Francois: placed before the IF for clear reading
+                cv2_chn.imwrite(output_path(basename+'_clahe.png', options), clahe, [cv2.IMWRITE_PNG_COMPRESSION, compression]) 
+                #cv2.imwrite(output_path(basename+'_protus.png', options), protus, [cv2.IMWRITE_PNG_COMPRESSION, compression])
+                cv2_chn.imwrite(output_path(basename+'_protus.png', options), protus, [cv2.IMWRITE_PNG_COMPRESSION, compression])
         anchor_refresh = False
         display_refresh = False

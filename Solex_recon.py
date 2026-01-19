@@ -17,6 +17,9 @@ from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Pool
 import FreeSimpleGUI as sg # for progress bar
 from scipy.ndimage import gaussian_filter1d
+import cv2
+import numpy as np
+from astropy.io import fits  
 
 '''
 process files: call solex_read and solex_proc to process a list of files with specified options
@@ -133,42 +136,120 @@ def solex_process(options, disk_list, backup_bounds, hdr):
         write_complete(basefich0 + '_log.txt', options)
 
 
+
+
 def single_image_process(frame_circularized, hdr, options, cercle0, borders, basefich, backup_bounds):
-    if options['save_fit']:  # first two shifts are not user specified
+    if options['save_fit']:
         DiskHDU = fits.PrimaryHDU(frame_circularized, header=hdr)
         DiskHDU.writeto(output_path(basefich + '_circular.fits', options), overwrite='True')
 
-
+    # 横向畸变校正
     if options['transversalium']:
         if not cercle0 == (-1, -1, -1):
             detransversaliumed = correct_transversalium2(frame_circularized, cercle0, borders, options, 0, basefich)
         else:
-            detransversaliumed = correct_transversalium2(frame_circularized, (0,0,99999), [0, backup_bounds[0]+20, frame_circularized.shape[1] -1, backup_bounds[1]-20], options, 0, basefich)
+            detransversaliumed = correct_transversalium2(
+                frame_circularized, 
+                (0,0,99999), 
+                [0, backup_bounds[0]+20, frame_circularized.shape[1] -1, backup_bounds[1]-20], 
+                options, 0, basefich
+            )
     else:
         detransversaliumed = frame_circularized
 
-    if options['save_fit'] and options['transversalium']:  # first two shifts are not user specified
+    if options['save_fit'] and options['transversalium']:
         DiskHDU = fits.PrimaryHDU(detransversaliumed, header=hdr)
         DiskHDU.writeto(output_path(basefich + '_detransversaliumed.fits', options), overwrite='True')
 
+    # ========== 核心修复：稳定的圆心定位 + 坐标体系修正 + 保守居中 ==========
+    def get_stable_circle_center(img, cercle0):
+        """
+        稳定的圆心定位策略：
+        1. 优先使用椭圆拟合的圆心（cercle0），这是天文图像的可靠来源
+        2. 若拟合失败，用图像灰度重心（比霍夫圆更稳定）
+        3. 最后兜底用图像几何中心
+        """
+        h, w = img.shape
+        
+        # 策略1：优先使用椭圆拟合的圆心（原逻辑，最可靠）
+        if not cercle0 == (-1, -1, -1):
+            cx, cy = int(cercle0[0]), int(cercle0[1])
+            #print(f"使用椭圆拟合圆心：({cx}, {cy})")
+            return cx, cy
+        
+        # 策略2：灰度重心（基于亮度分布，比霍夫圆稳定）
+        # 归一化图像
+        img_norm = (img - np.min(img)) / (np.max(img) - np.min(img))
+        # 计算水平/垂直方向的灰度重心
+        x_coords = np.arange(w)
+        y_coords = np.arange(h)
+        # 水平重心：各列亮度加权平均
+        cx = np.sum(x_coords * np.sum(img_norm, axis=0)) / np.sum(img_norm)
+        # 垂直重心：各行亮度加权平均
+        cy = np.sum(y_coords * np.sum(img_norm, axis=1)) / np.sum(img_norm)
+        cx, cy = int(round(cx)), int(round(cy))
+        
+        if not np.isnan(cx) and not np.isnan(cy):
+            #print(f"使用灰度重心圆心：({cx}, {cy})")
+            return cx, cy
+        
+        # 策略3：兜底用几何中心
+        #print("使用图像几何中心：({w//2}, {h//2})")
+        return w//2, h//2
+
+    def center_image_around_point(img, target_center, target_size):
+        """
+        保守的居中逻辑：将指定圆心移到图像正中心，而非裁剪
+        （避免裁剪导致的偏移，直接平移/填充）
+        """
+        h, w = img.shape
+        target_w, target_h = target_size
+        # 创建背景画布（填充原图像背景色：边缘像素的均值，更自然）
+        bg_color = np.mean(img[0:10, 0:10])  # 取左上角10x10区域的均值作为背景
+        new_img = np.full((target_h, target_w), bg_color, dtype=img.dtype)
+        
+        # 计算平移偏移量：让target_center对齐新图像中心
+        new_cx, new_cy = target_w // 2, target_h // 2
+        dx = new_cx - target_center[0]  # 水平偏移
+        dy = new_cy - target_center[1]  # 垂直偏移
+        
+        # 计算原图像在新画布中的位置（避免越界）
+        # 原图像的显示区域
+        src_x_start = max(0, -dx)
+        src_x_end = min(w, target_w - dx)
+        src_y_start = max(0, -dy)
+        src_y_end = min(h, target_h - dy)
+        
+        # 新画布的粘贴区域
+        dst_x_start = max(0, dx)
+        dst_x_end = dst_x_start + (src_x_end - src_x_start)
+        dst_y_start = max(0, dy)
+        dst_y_end = dst_y_start + (src_y_end - src_y_start)
+        
+        # 粘贴图像（核心：仅平移，不裁剪，避免圆心偏移）
+        new_img[dst_y_start:dst_y_end, dst_x_start:dst_x_end] = img[src_y_start:src_y_end, src_x_start:src_x_end]
+        
+        return new_img
+
     cercle = cercle0
-    if not options['fixed_width'] == None or options['crop_width_square']:
+    if not options['fixed_width'] is None or options['crop_width_square']:
         h, w = detransversaliumed.shape
-        nw = h if options['fixed_width'] == None else options['fixed_width'] # new width
-        nw2 = nw // 2
-        cx = w // 2 if cercle == (-1, -1, -1) else int(cercle[0])
-        tx = nw2 - cx
-        new_img = np.full((h, nw), detransversaliumed[0, 0], dtype=detransversaliumed.dtype)
-
-        new_img[:, :min(cx + nw2, detransversaliumed.shape[1]) - max(0, cx - nw2)] = detransversaliumed[:, max(0, cx - nw2) : min(cx + nw2, detransversaliumed.shape[1])]
-
-        if tx > 0:
-            new_img = np.roll(new_img, tx, axis = 1)
-            new_img[:, :tx] = detransversaliumed[0, 0]
-
+        # 确定目标尺寸（保持原逻辑，但改为平移居中而非裁剪）
+        target_w = h if options['fixed_width'] is None else options['fixed_width']
+        target_h = target_w if options['crop_width_square'] else h
+        target_size = (target_w, target_h)
+        
+        # 第一步：获取稳定的圆心（优先椭圆拟合，避免错误检测）
+        cx, cy = get_stable_circle_center(detransversaliumed, cercle0)
+        
+        # 第二步：保守居中：将圆心平移到图像中心（不裁剪，仅填充）
+        detransversaliumed = center_image_around_point(detransversaliumed, (cx, cy), target_size)
+        
+        # 更新圆心为新图像的几何中心（严格居中）
         if not cercle == (-1, -1, -1):
-            cercle = (nw2, cercle[1], cercle[2])
-        detransversaliumed = new_img
+            cercle = (target_w // 2, target_h // 2, cercle[2])
 
-
+    # 最终图像处理
     return image_process(detransversaliumed, cercle, options, hdr, basefich)
+    
+    

@@ -13,6 +13,7 @@ from PIL import Image, ImageTk
 import io
 import cv2
 import numpy as np
+import cv2_chn
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -239,9 +240,9 @@ def write_ini():
         traceback.print_exc()
         print('ERROR: failed to write config file: ' + mydir_ini)
 
-
 def apply_clahe(file, options, write_file=True):
-    frame = cv2.imread(file, cv2.IMREAD_ANYDEPTH)
+    #frame = cv2.imread(file, cv2.IMREAD_ANYDEPTH)
+    frame = cv2_chn.imread(file, cv2.IMREAD_ANYDEPTH)
     if len(frame.shape) > 2:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # make sure gray not color
     clahe = cv2.createCLAHE(clipLimit=0.8, tileGridSize=(options['tile_size'],options['tile_size']))
@@ -252,7 +253,8 @@ def apply_clahe(file, options, write_file=True):
         cl1 = rescale_brightness(cl1, dark, bright, alpha=options['sat']/100)
     if write_file:
         print('save:', os.path.splitext(file)[0]+'_clahe.png')
-        cv2.imwrite(os.path.splitext(file)[0]+'_clahe.png',cl1)
+        #cv2.imwrite(os.path.splitext(file)[0]+'_clahe.png',cl1)
+        cv2_chn.imwrite(os.path.splitext(file)[0]+'_clahe.png',cl1)
     return cl1
 
 options = {'workDir':'', 'language':'English', 'lo':0, 'hi':100, 'do_stretch':False, 'sat':80, 'tile_size':2}
