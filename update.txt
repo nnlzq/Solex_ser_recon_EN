@@ -1,6 +1,6 @@
 https://github.com/nnlzq/Solex_ser_recon_EN
 
-This code is forked from thelondonsmiths/Solex_ser_recon_EN (https://github.com/thelondonsmiths/Solex_ser_recon_EN)
+These codes are forked from thelondonsmiths/Solex_ser_recon_EN (https://github.com/thelondonsmiths/Solex_ser_recon_EN)
 Modified by lzq (nnlzq@163.com) @ 2026/01/19
 
 New features added:
