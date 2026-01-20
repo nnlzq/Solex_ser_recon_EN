@@ -1,3 +1,17 @@
+https://github.com/nnlzq/Solex_ser_recon_EN
+
+These codes are forked from thelondonsmiths/Solex_ser_recon_EN (https://github.com/thelondonsmiths/Solex_ser_recon_EN)
+Modified by lzq (nnlzq@163.com) @ 2026/01/19
+
+New features added:
+1. Implemented multiprocessing to accelerate processing speed.
+2. Modified cv2.imread()/cv2.imwrite() to support directories or filenames containing Chinese characters.
+3. Fixed an issue where corrupted images were occasionally obtained when using "Folder input mode" with "Continuous detect mode".
+4. When enabling "Crop square" function, the entire disk is aligned to the center (vertically and horizontally) of the image.
+
+
+
+-------------------------------
 Solar disk reconstruction from spectroheliograph (SHG) video files. Both 16bit and 8bit files are accepted. SER and AVI files are accepted.
 If no spectral line can recognised in the video file, the program will stop.
 
