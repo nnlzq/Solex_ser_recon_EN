@@ -121,17 +121,16 @@ def precheck_files(serfiles, options):
             print('ERROR opening file : ', serfile)
             continue
 
-        #-------wait for serfile completely wrote to disk-------------------
-        fsize = os.path.getsize(serfile)
-        while fsize>0:
-            time.sleep(3)
-            fsize2 = os.path.getsize(serfile)
-            if fsize==fsize2:
-                break
-            else:
-                fsize = fsize2
-        #--------------------------
-        
+        # ------- wait for serfile to be completely written to disk --------
+        quiet_period = 3  # seconds
+        while True:
+            mtime = os.path.getmtime(serfile)
+            age = time.time() - mtime
+            
+            if age < quiet_period:
+                time.sleep(quiet_period - age)
+        # ------------------------------------------------------------------
+    
         if not good_tasks:
             # save parameters to config file if this is the first good task
             if options['selected_mode'] == 'File input mode':
