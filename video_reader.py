@@ -42,24 +42,25 @@ class video_reader:
         
             self.Width=np.fromfile(file, dtype='uint32', count=1,offset=offset)[0]
             offset=offset+4
-        
+
             self.Height=np.fromfile(file, dtype='uint32', count=1,offset=offset)[0]
             offset=offset+4
-        
+
             PixelDepthPerPlane=np.fromfile(file, dtype='uint32', count=1,offset=offset)
             self.PixelDepthPerPlane=PixelDepthPerPlane[0]
             offset=offset+4
-        
+
             FrameCount=np.fromfile(file, dtype='uint32', count=1,offset=offset)
             self.FrameCount=FrameCount[0]
-        
+            offset=offset+4
+
             if self.PixelDepthPerPlane==8:
                 self.infiledatatype='uint8'
-                self.count=self.Width*self.Height       # Nombre d'octet d'une trame
+                self.count=int(self.Width)*int(self.Height)       # Nombre d'octet d'une trame
                 self.infilebytes=1
             else:
                 self.infiledatatype='uint16'
-                self.count=self.Width*self.Height      # Nombre d'octet d'une trame
+                self.count=int(self.Width)*int(self.Height)      # Nombre d'octet d'une trame
                 self.infilebytes=2
             self.FrameIndex=-1             # Index de trame, on evite les deux premieres
             self.offset=178               # Offset de l'entete fichier ser
@@ -73,8 +74,8 @@ class video_reader:
             self.Height = int(self.file.get(cv2.CAP_PROP_FRAME_HEIGHT))
             self.PixelDepthPerPlane=1*8
             self.FrameCount = int(self.file.get(cv2.CAP_PROP_FRAME_COUNT))            
-            self.count=self.Width*self.Height
-            self.infilebytes=1            
+            self.count=int(self.Width)*int(self.Height)
+            self.infilebytes=1
             self.FrameIndex=-1
             self.offset = 0
             self.fileoffset = 0 #MattC to avoid stomping on offset accumulator
@@ -93,7 +94,7 @@ class video_reader:
 
     def next_frame(self):
         self.FrameIndex += 1
-        self.offset = self.fileoffset + self.FrameIndex * self.count * self.infilebytes #MattC track offset
+        self.offset = int(self.fileoffset) + self.FrameIndex * int(self.count) * int(self.infilebytes) #MattC track offset
       
         if self.SER_flag: #MattC
             if self.buffer_remaining == 0:
