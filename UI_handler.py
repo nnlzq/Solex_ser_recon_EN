@@ -239,7 +239,7 @@ def inputUI(options):
         layout_title + [[tab_group]] + layout_folder_output + layout_base
     ]
 
-    window = sg.Window('SHG Version 4.3.5 Mod', layout, finalize=True)
+    window = sg.Window('SHG Version 4.3.7 Mod', layout, finalize=True)
     window.BringToFront()
 
     if options['language'] in langs:
