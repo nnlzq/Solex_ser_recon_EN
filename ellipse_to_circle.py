@@ -97,28 +97,45 @@ def correct_image(image, phi, ratio, center, height, options, print_log=False):
     OUT : numpy array, numpy array (2 elements)
     """
 
-    mat, theta = get_correction_matrix(phi, ratio) 
-    mat3 = np.zeros((3, 3))
+    mat, theta = get_correction_matrix(phi, ratio)
+    mat3 = np.eye(3)
     mat3[:2, :2] = mat
-    mat3[2, 2] = 1
-    corners = np.array([[0, 0], [0, image.shape[0]], [image.shape[1], 0], [
-                       image.shape[1], image.shape[0]]])
-    # use inverse because we represent mat3 as inverse of transform
-    new_corners = (np.linalg.inv(mat) @ corners.T).T
+    corners = np.array([[0, 0], [0, image.shape[0]], [image.shape[1], 0],
+                        [image.shape[1], image.shape[0]]], dtype=np.float64)
+    mat_inv = np.linalg.inv(mat3)
+    new_corners = (mat_inv @ corners.T).T
     new_h = np.max(new_corners[:, 1]) - np.min(new_corners[:, 1])
     new_w = np.max(new_corners[:, 0]) - np.min(new_corners[:, 0])
-    mat3 = mat3 @ np.array([[1, 0, np.min(new_corners[:, 0])], [0, 1, np.min(
-        new_corners[:, 1])], [0, 0, 1]])  # apply translation to prevent clipping
-    my_transform = transform.ProjectiveTransform(matrix=mat3)
-    corrected_img = transform.warp(image, my_transform, output_shape=(
-        np.ceil(new_h), np.ceil(new_w)), cval=image[0, 0])
-    corrected_img = (
-        2**16 *
-        corrected_img).astype(
-        np.uint16)  # note : 16-bit output
+    # Apply translation to prevent clipping.  This is the same composition as
+    # the original code: mat3 = mat3 @ T(min_x, min_y), which yields
+    # mat3[0, 2] = mat[0,0]*min_x + mat[0,1]*min_y
+    # mat3[1, 2] = mat[1,0]*min_x + mat[1,1]*min_y
+    min_x = np.min(new_corners[:, 0])
+    min_y = np.min(new_corners[:, 1])
+    mat3[0, 2] = mat[0, 0] * min_x + mat[0, 1] * min_y
+    mat3[1, 2] = mat[1, 0] * min_x + mat[1, 1] * min_y
+
+    out_h = int(np.ceil(new_h))
+    out_w = int(np.ceil(new_w))
+    border_val = float(image[0, 0])
+
+    # cv2.warpPerspective takes the INVERSE map (output -> input), unlike
+    # skimage's ProjectiveTransform which is forward.  The forward mat3 is
+    # what callers expect in the return value, so invert just for the call.
+    cv_M = np.linalg.inv(mat3).astype(np.float64)
+    corrected_img = cv2.warpPerspective(
+        image.astype(np.float32),
+        cv_M,
+        (out_w, out_h),
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=border_val,
+    )
+    # scale to 16-bit
+    corrected_img = np.clip(corrected_img * 65536.0, 0, 65535).astype(np.uint16)
+
     new_center = (np.linalg.inv(mat) @ center.T).T - \
-        np.array([np.min(new_corners[:, 0]), np.min(new_corners[:, 1])])
-    
+        np.array([min_x, min_y])
+
     new_radius = height * np.sqrt(np.abs(ratio / np.linalg.det(mat))) # derivation: area of a circle / area of an ellipse
     if print_log:
         basefich0 = options['basefich0']

@@ -49,11 +49,22 @@ def logme(path, options, s):
     if '_nolog' in options:
         return
     try:
-        with open(output_path(path, options), 'a') as f:
-            f.write(s + '\n')
+        # Cache open file handles to avoid the per-call open()/close()
+        # overhead, which is significant when many log lines are written
+        # during a single processing run.
+        fh = _log_fhs.get(path)
+        if fh is None:
+            fh = open(output_path(path, options), 'a')
+            _log_fhs[path] = fh
+        fh.write(s + '\n')
+        fh.flush()
     except Exception:
         traceback.print_exc()
         print('ERROR: failed to log file: ' + path)
+
+
+# Module-level cache of open log file handles (see logme above).
+_log_fhs = {}
 
 '''
 if options['output_dir'] is empty, then output there
@@ -113,25 +124,28 @@ def read_video_improved(rdr, fit, options):
     col_indeces = []
 
     for shift in options['shift']:
-        ind_l = (np.asarray(fit)[:, 0] + np.ones(ih)*shift).astype(int)
+        ind_l = (np.asarray(fit)[:, 0] + shift).astype(int)
 
         # CLEAN if fitting goes too far
         ind_l[ind_l < 0] = 0
         ind_l[ind_l > iw - 2] = iw - 2
-        ind_r = (ind_l + np.ones(ih)).astype(int)
+        ind_r = (ind_l + 1).astype(int)
         col_indeces.append((ind_l, ind_r))
 
     left_weights = np.ones(ih) - np.asarray(fit)[:, 1]
     right_weights = np.ones(ih) - left_weights
+    # hoist out of the per-frame hot loop
+    row_idx = np.arange(ih)
+    n_shifts = len(options['shift'])
 
     # lance la reconstruction du disk a partir des trames
     #print('reader num frames:', rdr.FrameCount)
     while rdr.has_frames():
         img = rdr.next_frame()
-        for i in range(len(options['shift'])):
+        for i in range(n_shifts):
             ind_l, ind_r = col_indeces[i]
-            left_col = img[np.arange(ih), ind_l]
-            right_col = img[np.arange(ih), ind_r]
+            left_col = img[row_idx, ind_l]
+            right_col = img[row_idx, ind_r]
             IntensiteRaie = left_col * left_weights + right_col * right_weights
             disk_list[i][:, rdr.FrameIndex] = IntensiteRaie
 
@@ -173,12 +187,12 @@ def detect_bord(img, axis):
     ub = img.shape[int(not axis)] - 1 - np.argmax(np.flip(where_sun)) # int(not axis) : get the other axis 1 -> 0 and 0 -> 1
     return lb, ub
 
-def compute_mean_max(rdr, options, basefich0):
+def compute_mean_max(rdr, options, basefich0, frame_cache=None):
     """IN : file path"
     OUT :numpy array
     """
     #basefich0 = os.path.splitext(file)[0] # file name without extension #TOTO delete this line
-    
+
     logme(basefich0 + '_log.txt', options, 'Width, Height : ' + str(rdr.Width) + ' ' + str(rdr.Height))
     logme(basefich0 + '_log.txt', options, 'Number of frames : ' + str(rdr.FrameCount))
     my_data = np.zeros((rdr.ih, rdr.iw), dtype='uint64')
@@ -187,10 +201,14 @@ def compute_mean_max(rdr, options, basefich0):
         img = rdr.next_frame()
         my_data += img
         max_data = np.maximum(max_data, img)
+        if frame_cache is not None:
+            frame_cache[rdr.FrameIndex] = img
+    if frame_cache is not None:
+        frame_cache.flush()
     return (my_data / rdr.FrameCount).astype('uint16'), max_data
 
 
-def compute_mean_return_fit(vid_rdr, options, hdr, iw, ih, basefich0):
+def compute_mean_return_fit(vid_rdr, options, hdr, iw, ih, basefich0, frame_cache=None):
     """
     ----------------------------------------------------------------------------
     Use the mean image to find the location of the spectral line of maximum darkness
@@ -201,7 +219,7 @@ def compute_mean_return_fit(vid_rdr, options, hdr, iw, ih, basefich0):
     flag_display = options['flag_display']
     # first compute mean image
     # rdr is the video_reader object
-    mean_img, max_img = compute_mean_max(vid_rdr, options, basefich0)
+    mean_img, max_img = compute_mean_max(vid_rdr, options, basefich0, frame_cache=frame_cache)
     
     if options['save_fit']:
         DiskHDU = fits.PrimaryHDU(mean_img, header=hdr)
@@ -360,20 +378,35 @@ def fix_edge_effect(multiplier, circle, linlen):
     y1 = math.ceil(max(circle[1] - circle[2], 0))
     y2 = math.floor(min(circle[1] + circle[2], multiplier.shape[0] - 1))
     halflen = linlen // 2
+    if y2 <= y1:
+        multiplier[:y1, :] = 0
+        multiplier[y2 + 1:, :] = 0
+        return multiplier
+
+    # Vectorise the per-row geometry: pre-compute x1/x2 for every y.
+    ys = np.arange(y1, y2 + 1, dtype=np.int64)
+    dxs = np.sqrt(np.clip(circle[2] ** 2 - (ys - circle[1]) ** 2, 0, None))
+    x1s = np.maximum(circle[0] - dxs, 0).astype(np.int64)
+    x2s = np.minimum(circle[0] + dxs, multiplier.shape[1] - 1).astype(np.int64)
+    valid = (x2s - x1s) >= linlen
+
     multiplier[:y1, :] = 0
-    multiplier[y2+1:, :] = 0
-    for y in range(y1, y2):
-        dx = math.floor((circle[2]**2 - (y-circle[1])**2)**0.5)
-        x2 = math.floor(min(circle[0] + dx, multiplier.shape[1] - 1))
-        x1 = math.ceil(max(circle[0] - dx, 0))
+    multiplier[y2 + 1:, :] = 0
+
+    # The per-row edits are inherently ragged, but the loop body is now
+    # much lighter than the original pure-Python version.
+    for i in range(ys.size):
+        y = ys[i]
+        x1 = int(x1s[i])
+        x2 = int(x2s[i])
         multiplier[y, :x1] = 0
         multiplier[y, x2:] = 0
-        if x2 - x1 < linlen:
-            continue # no reliable transversalium correction, just leave what we have
+        if not valid[i]:
+            continue
         if x1 > 0:
-            multiplier[y, x1:x1+halflen] = multiplier[y, x1+halflen]
+            multiplier[y, x1:x1 + halflen] = multiplier[y, x1 + halflen]
         if x2 < multiplier.shape[1] - 1:
-            multiplier[y, x2-halflen:x2] = multiplier[y, x2-halflen-1]
+            multiplier[y, x2 - halflen:x2] = multiplier[y, x2 - halflen - 1]
     return multiplier
 
 '''
@@ -385,20 +418,64 @@ reqFlag: 0 if this was a user-requested image, else: 1 if shift = 10, 2 if shift
 def correct_transversalium2(img, circle, borders, options, reqFlag, basefich):
     y1 = math.ceil(max(circle[1] - circle[2], borders[1]))
     y2 = math.floor(min(circle[1] + circle[2], borders[3]))
-    y_ratios_r = [0]
+    n = max(0, y2 - (y1 + 1))
     y_ratios = [0]
-    for y in range(y1 + 1, y2):
-        dx = math.floor((circle[2]**2 - (y-circle[1])**2)**0.5)
-        strip0 = img[y - 1, math.ceil(max(circle[0] - dx, borders[0])) : math.floor(min(circle[0] + dx, borders[2]))]
-        strip1 = img[y, math.ceil(max(circle[0] - dx, borders[0])) : math.floor(min(circle[0] + dx, borders[2]))]
-        
-        rat = np.log(strip1 / strip0)
-        y_ratios.append(np.mean(rat))
-        y_ratios_r.append(np.mean(reject_outliers(rat)))
-        if y % 100 == 0 and 0:
-            print(y)
-            plt.hist(rat, bins = np.linspace(0.5, 2, 128))
-            plt.savefig()
+    y_ratios_r = [0]
+    if n > 0:
+        # Vectorise the per-row geometry: pre-compute x1/x2 for every y.
+        ys = np.arange(y1 + 1, y2, dtype=np.int64)
+        dxs = np.floor(np.sqrt(np.clip(circle[2] ** 2 - (ys - circle[1]) ** 2, 0, None))).astype(np.int64)
+        x1s = np.maximum(circle[0] - dxs, borders[0]).astype(np.int64)
+        x2s = np.minimum(circle[0] + dxs, borders[2]).astype(np.int64)
+        x1s = np.maximum(x1s, 0)
+        x2s = np.minimum(x2s, img.shape[1] - 1)
+        lengths = (x2s - x1s).clip(min=0)
+        max_len = int(lengths.max()) if lengths.size else 0
+
+        if max_len > 1:
+            # Build a NaN-padded (n, max_len) float64 array of log(ratio)
+            # so the bulk of the work is a single np.nanmean.
+            padded = np.full((n, max_len), np.nan, dtype=np.float64)
+            for i in range(n):
+                L = int(lengths[i])
+                if L <= 1:
+                    continue
+                s1 = img[ys[i], x1s[i]:x1s[i] + L].astype(np.float64)
+                s0 = img[ys[i] - 1, x1s[i]:x1s[i] + L].astype(np.float64)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    ratio = np.log(s1 / s0)
+                ratio = np.where(np.isfinite(ratio), ratio, np.nan)
+                padded[i, :L] = ratio
+
+            y_ratios_arr = np.nanmean(padded, axis=1)
+
+            # per-row outlier rejection (median + MAD)
+            y_ratios_r_arr = np.empty(n, dtype=np.float64)
+            for i in range(n):
+                L = int(lengths[i])
+                row = padded[i, :L]
+                row = row[~np.isnan(row)]
+                if row.size == 0:
+                    y_ratios_r_arr[i] = 0.0
+                    continue
+                median_value = np.median(row)
+                d = np.abs(row - median_value)
+                mdev = np.median(d)
+                if mdev == 0:
+                    y_ratios_r_arr[i] = np.mean(row)
+                else:
+                    s = d / mdev
+                    y_ratios_r_arr[i] = np.mean(row[s < 2])
+
+            y_ratios = [0.0] + y_ratios_arr.tolist()
+            y_ratios_r = [0.0] + y_ratios_r_arr.tolist()
+        else:
+            y_ratios = [0.0] * n
+            y_ratios_r = [0.0] * n
+    # if y % 100 == 0 and 0:  # debug block, left disabled
+    #     print(y)
+    #     plt.hist(rat, bins = np.linspace(0.5, 2, 128))
+    #     plt.savefig()
     trend = savgol_filter(y_ratios_r, min(options['trans_strength'], len(y_ratios_r) // 2 * 2 - 1), 3)
 
     detrended = y_ratios_r - trend # remove trend (smoothed)
@@ -549,10 +626,12 @@ def image_process(frame, cercle, options, header, basefich):
             frame_protus = cv2.circle(frame_protus, (x0,y0),r,80,-1)
     
     # handle rotations
-    frame_raw = np.rot90(frame_raw, options['img_rotate']//90, axes=(0,1))
-    frame_HC = np.rot90(frame_HC, options['img_rotate']//90, axes=(0,1))
-    frame_protus = np.rot90(frame_protus, options['img_rotate']//90, axes=(0,1))
-    cc = np.rot90(cc, options['img_rotate']//90, axes=(0,1))
+    k = options['img_rotate'] // 90
+    if k % 4 != 0:
+        frame_raw    = np.rot90(frame_raw,    k, axes=(0,1))
+        frame_HC     = np.rot90(frame_HC,     k, axes=(0,1))
+        frame_protus = np.rot90(frame_protus, k, axes=(0,1))
+        cc           = np.rot90(cc,           k, axes=(0,1))
 
     # save the clahe as a png
     compression = 0

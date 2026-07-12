@@ -6,7 +6,8 @@ import numpy as np
 
 def imread(path,arg):
     """读取中文路径图片"""
-    return cv2.imdecode(np.fromfile(path, dtype=np.uint16), -1,arg)
+    # cv2.imdecode expects a 1D byte buffer, so the dtype must be uint8.
+    return cv2.imdecode(np.fromfile(path, dtype=np.uint8), -1,arg)
 
 def imwrite(path, img, arg):
     """保存图片到中文路径"""
