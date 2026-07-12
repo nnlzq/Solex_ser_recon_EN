@@ -61,21 +61,15 @@ def solex_read(file, options):
     ih = rdr.ih
     iw = rdr.iw
 
-    # Cache every frame to a memmap while computing mean/max, so the
-    # subsequent read_video_improved pass can replay them without
-    # re-reading the SER/AVI file from disk.
-    cache_path = basefich0 + '_framecache.tmp'
-    frame_cache = np.memmap(cache_path, dtype='uint16', mode='w+',
-                            shape=(rdr.FrameCount, rdr.ih, rdr.iw))
-
+    # Read mean/max fit, then re-open the file to reconstruct the disk.
+    # Three separate reads keeps the existing single-purpose reader
+    # implementations intact and avoids memmap-cache lifetime issues
+    # on Windows.
     mean_img, fit, backup_y1, backup_y2 = compute_mean_return_fit(
-        rdr, options, hdr, iw, ih, basefich0, frame_cache=frame_cache)
+        rdr, options, hdr, iw, ih, basefich0)
 
-    cached_rdr = _FrameCache(frame_cache, cache_path)
-    try:
-        disk_list, ih, iw, FrameCount = read_video_improved(cached_rdr, fit, options)
-    finally:
-        cached_rdr.close()
+    rdr2 = video_reader(file)
+    disk_list, ih, iw, FrameCount = read_video_improved(rdr2, fit, options)
 
     hdr['NAXIS1'] = iw  # note: slightly dodgy, new width for subsequent fits file
 

@@ -6,7 +6,6 @@ Version 24 July 2023
 """
 import numpy as np
 import cv2 #MattC
-import os # needed by _FrameCache.close()
 
 class video_reader:
 
@@ -126,40 +125,6 @@ class video_reader:
 
     def has_frames(self):
         return self.FrameIndex + 1 < self.FrameCount
-
-# Lightweight memmap-backed frame cache, providing the same minimal interface
-# (ih/iw/Width/Height/FrameCount/FrameIndex/has_frames/next_frame) used by
-# read_video_improved.  Lets the second pass over a SER/AVI video reuse the
-# frames that compute_mean_max already pulled from disk, avoiding a second
-# full-file read.
-class _FrameCache:
-    def __init__(self, memmap_arr, path):
-        self.arr = memmap_arr
-        self.path = path
-        self.FrameCount = int(memmap_arr.shape[0])
-        self.ih = int(memmap_arr.shape[1])
-        self.iw = int(memmap_arr.shape[2])
-        self.Width = self.iw
-        self.Height = self.ih
-        self.FrameIndex = -1
-
-    def has_frames(self):
-        return self.FrameIndex + 1 < self.FrameCount
-
-    def next_frame(self):
-        self.FrameIndex += 1
-        # Copy out of the memmap so callers can safely mutate the buffer.
-        return np.array(self.arr[self.FrameIndex], copy=True)
-
-    def close(self):
-        try:
-            del self.arr
-        except Exception:
-            pass
-        try:
-            os.remove(self.path)
-        except OSError:
-            pass
 
 # wrapper of video_reader which stores everything in memory
 class all_video_reader:

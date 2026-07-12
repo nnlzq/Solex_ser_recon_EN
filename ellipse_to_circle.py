@@ -102,8 +102,12 @@ def correct_image(image, phi, ratio, center, height, options, print_log=False):
     mat3[:2, :2] = mat
     corners = np.array([[0, 0], [0, image.shape[0]], [image.shape[1], 0],
                         [image.shape[1], image.shape[0]]], dtype=np.float64)
+    # mat3 is 3x3 in homogeneous coordinates, so we need an extra column of
+    # ones to multiply against corners (4x2).  Without this the matmul below
+    # raises "size 2 is different from 3".
+    corners_h = np.column_stack([corners, np.ones(len(corners))])
     mat_inv = np.linalg.inv(mat3)
-    new_corners = (mat_inv @ corners.T).T
+    new_corners = (mat_inv @ corners_h.T).T
     new_h = np.max(new_corners[:, 1]) - np.min(new_corners[:, 1])
     new_w = np.max(new_corners[:, 0]) - np.min(new_corners[:, 0])
     # Apply translation to prevent clipping.  This is the same composition as

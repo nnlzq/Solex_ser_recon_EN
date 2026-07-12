@@ -49,22 +49,11 @@ def logme(path, options, s):
     if '_nolog' in options:
         return
     try:
-        # Cache open file handles to avoid the per-call open()/close()
-        # overhead, which is significant when many log lines are written
-        # during a single processing run.
-        fh = _log_fhs.get(path)
-        if fh is None:
-            fh = open(output_path(path, options), 'a')
-            _log_fhs[path] = fh
-        fh.write(s + '\n')
-        fh.flush()
+        with open(output_path(path, options), 'a') as f:
+            f.write(s + '\n')
     except Exception:
         traceback.print_exc()
         print('ERROR: failed to log file: ' + path)
-
-
-# Module-level cache of open log file handles (see logme above).
-_log_fhs = {}
 
 '''
 if options['output_dir'] is empty, then output there
@@ -187,7 +176,7 @@ def detect_bord(img, axis):
     ub = img.shape[int(not axis)] - 1 - np.argmax(np.flip(where_sun)) # int(not axis) : get the other axis 1 -> 0 and 0 -> 1
     return lb, ub
 
-def compute_mean_max(rdr, options, basefich0, frame_cache=None):
+def compute_mean_max(rdr, options, basefich0):
     """IN : file path"
     OUT :numpy array
     """
@@ -201,14 +190,10 @@ def compute_mean_max(rdr, options, basefich0, frame_cache=None):
         img = rdr.next_frame()
         my_data += img
         max_data = np.maximum(max_data, img)
-        if frame_cache is not None:
-            frame_cache[rdr.FrameIndex] = img
-    if frame_cache is not None:
-        frame_cache.flush()
     return (my_data / rdr.FrameCount).astype('uint16'), max_data
 
 
-def compute_mean_return_fit(vid_rdr, options, hdr, iw, ih, basefich0, frame_cache=None):
+def compute_mean_return_fit(vid_rdr, options, hdr, iw, ih, basefich0):
     """
     ----------------------------------------------------------------------------
     Use the mean image to find the location of the spectral line of maximum darkness
@@ -219,7 +204,7 @@ def compute_mean_return_fit(vid_rdr, options, hdr, iw, ih, basefich0, frame_cach
     flag_display = options['flag_display']
     # first compute mean image
     # rdr is the video_reader object
-    mean_img, max_img = compute_mean_max(vid_rdr, options, basefich0, frame_cache=frame_cache)
+    mean_img, max_img = compute_mean_max(vid_rdr, options, basefich0)
     
     if options['save_fit']:
         DiskHDU = fits.PrimaryHDU(mean_img, header=hdr)
