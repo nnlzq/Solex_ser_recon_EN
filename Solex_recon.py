@@ -11,7 +11,7 @@ Reconstruction of an image from the deviations between the minimum of the line a
 """
 
 from solex_util import *
-from video_reader import *
+from video_reader import video_reader, MmapSERReader
 from ellipse_to_circle import ellipse_to_circle, correct_image
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Pool
@@ -19,7 +19,8 @@ import FreeSimpleGUI as sg # for progress bar
 from scipy.ndimage import gaussian_filter1d
 import cv2
 import numpy as np
-from astropy.io import fits  
+from astropy.io import fits
+
 
 '''
 process files: call solex_read and solex_proc to process a list of files with specified options
@@ -60,16 +61,25 @@ def solex_read(file, options):
     hdr = make_header(rdr)
     ih = rdr.ih
     iw = rdr.iw
+    frame_count = rdr.FrameCount
+    # 释放 video_reader 的文件句柄;后续 mmap 阶段由 MmapSERReader 自带
+    del rdr
 
-    # Read mean/max fit, then re-open the file to reconstruct the disk.
-    # Three separate reads keeps the existing single-purpose reader
-    # implementations intact and avoids memmap-cache lifetime issues
-    # on Windows.
-    mean_img, fit, backup_y1, backup_y2 = compute_mean_return_fit(
-        rdr, options, hdr, iw, ih, basefich0)
-
-    rdr2 = video_reader(file)
-    disk_list, ih, iw, FrameCount = read_video_improved(rdr2, fit, options)
+    # ------------------------------------------------------------------
+    # 方案1:把 SER 文件本身 mmap 进进程地址空间。两遍都从同一块
+    # 内存视图读,操作系统文件缓存命中后第二遍几乎零成本,同时省去
+    # 写 5+ GB 临时 framecache 文件的开销。
+    # ------------------------------------------------------------------
+    mmap_rdr = MmapSERReader(file)
+    try:
+        # 第一遍:计算 mean/max 并拟合谱线
+        mean_img, fit, backup_y1, backup_y2 = compute_mean_return_fit(
+            mmap_rdr, options, hdr, iw, ih, basefich0)
+        # 第二遍:同一块 mmap 视图直接 reset 回放,重建日面
+        mmap_rdr.reset()
+        disk_list, ih, iw, FrameCount = read_video_improved(mmap_rdr, fit, options)
+    finally:
+        mmap_rdr.close()
 
     hdr['NAXIS1'] = iw  # note: slightly dodgy, new width for subsequent fits file
 

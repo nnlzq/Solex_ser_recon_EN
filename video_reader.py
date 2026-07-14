@@ -6,6 +6,8 @@ Version 24 July 2023
 """
 import numpy as np
 import cv2 #MattC
+import os
+import mmap
 
 class video_reader:
 
@@ -125,6 +127,91 @@ class video_reader:
 
     def has_frames(self):
         return self.FrameIndex + 1 < self.FrameCount
+
+# ---------------------------------------------------------------------------
+# MmapSERReader: 把 SER 文件直接 mmap 进来,以 numpy 视图方式按帧回放
+# ---------------------------------------------------------------------------
+# 设计要点:
+#   * 不写额外文件,直接把 5+ GB 的 SER mmap 进进程虚拟地址空间
+#   * OS 自动把按页访问的热点数据缓存在系统文件缓存中,第二遍零成本
+#   * 与 video_reader 同样的 has_frames/next_frame 接口
+#   * 兼容 8-bit SER (infilebytes=1)
+class MmapSERReader:
+    """mmap-backed reader for SER files.  Identical read-side interface to
+    video_reader (has_frames, next_frame, ih/iw/Width/Height/FrameCount) but
+    pulls frames from an mmap rather than re-reading the file with np.fromfile.
+    """
+
+    def __init__(self, path, dtype='uint16'):
+        # Parse the SER header using the same code path as video_reader.
+        meta = video_reader(path)
+        self.ih = meta.ih
+        self.iw = meta.iw
+        self.Width = meta.Width
+        self.Height = meta.Height
+        self.FrameCount = int(meta.FrameCount)
+        self.infiledatatype = meta.infiledatatype
+        self.flag_rotate = meta.flag_rotate
+        self.FrameIndex = -1
+        itemsize = 1 if self.infiledatatype == 'uint8' else 2
+        # mmap the file
+        self._fd = os.open(path, os.O_BINARY | os.O_RDONLY)
+        file_size = os.fstat(self._fd).st_size
+        # 178 bytes SER header
+        header_size = 178
+        self._mm = mmap.mmap(self._fd, file_size, access=mmap.ACCESS_READ)
+        # Build the numpy view; clip the trailing bytes if the file does
+        # not end on a clean frame boundary.  Reshape using the raw
+        # (Height, Width) order from the SER header -- the rotation is
+        # applied on every frame in next_frame(), mirroring video_reader.
+        data = np.frombuffer(self._mm, dtype='uint8' if itemsize == 1 else 'uint16',
+                             offset=header_size)
+        per_frame_pixels = int(meta.Height) * int(meta.Width)
+        usable = data.size // per_frame_pixels
+        usable = min(usable, self.FrameCount)
+        usable_pixels = usable * per_frame_pixels
+        self._arr = data[:usable_pixels].reshape(usable,
+                                                 int(meta.Height),
+                                                 int(meta.Width))
+        # Drop meta-reader so its file handle is released.
+        del meta
+        # Truncate FrameCount if the file was shorter than declared.
+        self.FrameCount = int(self._arr.shape[0])
+
+    def has_frames(self):
+        return self.FrameIndex + 1 < self.FrameCount
+
+    def reset(self):
+        """Rewind to the first frame so the same mmap can be replayed."""
+        self.FrameIndex = -1
+
+    def next_frame(self):
+        self.FrameIndex += 1
+        # 必须 copy —— read_video_improved 内部会做 in-place 修改
+        img = np.array(self._arr[self.FrameIndex], copy=True)
+        if self.flag_rotate:
+            img = np.rot90(img)
+        if self.infiledatatype == 'uint8':
+            img = np.asarray(img, dtype='uint16') * 256
+        return img
+
+    def close(self):
+        # numpy buffer view 必须先释放,再 unmmap,再关 fd (顺序敏感)
+        if hasattr(self, '_arr') and self._arr is not None:
+            del self._arr
+            self._arr = None
+        if hasattr(self, '_mm') and self._mm is not None:
+            try:
+                self._mm.close()
+            except (BufferError, OSError):
+                pass
+            self._mm = None
+        if hasattr(self, '_fd') and self._fd is not None:
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+            self._fd = None
 
 # wrapper of video_reader which stores everything in memory
 class all_video_reader:
